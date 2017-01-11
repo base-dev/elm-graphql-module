@@ -1,8 +1,10 @@
-module GraphQL exposing
-    ( query
-    , mutation
-    , apply
-    , maybeEncode )
+module GraphQL
+    exposing
+        ( query
+        , mutation
+        , apply
+        , maybeEncode
+        )
 
 {-| This library provides support functions used by
     [elm-graphql](https://github.com/jahewson/elm-graphql), the GraphQL code generator for Elm.
@@ -12,59 +14,36 @@ module GraphQL exposing
 
 -}
 
-import Task exposing (Task)
 import Json.Decode exposing (..)
-import Json.Encode
-import Http
+import Json.Encode exposing (..)
+import Http exposing (..)
 
 
 {-| Executes a GraphQL query.
 -}
-query : String -> String -> String -> String -> Json.Encode.Value -> Decoder a -> Task Http.Error a
+query : String -> String -> String -> String -> Json.Encode.Value -> Decoder a -> Request a
 query method url query operation variables decoder =
     fetch method url query operation variables decoder
 
 
 {-| Executes a GraphQL mutation.
 -}
-mutation : String -> String -> String -> Json.Encode.Value -> Decoder a -> Task Http.Error a
+mutation : String -> String -> String -> Json.Encode.Value -> Decoder a -> Request a
 mutation url query operation variables decoder =
     fetch "POST" url query operation variables decoder
 
 
-fetch : String -> String -> String -> String -> Json.Encode.Value -> Decoder a -> Task Http.Error a
+fetch : String -> String -> String -> String -> Json.Encode.Value -> Decoder a -> Request a
 fetch verb url query operation variables decoder =
     let
         request =
-            (case verb of
-                "GET" ->
-                    buildRequestWithQuery verb url query operation variables
-
-                _ ->
-                    buildRequestWithBody verb url query operation variables
-            )
+            buildRequestWithBody "POST" url query operation variables decoder
     in
-        Http.fromJson (queryResult decoder) (Http.send Http.defaultSettings request)
+        request
 
 
-buildRequestWithQuery : String -> String -> String -> String -> Json.Encode.Value -> Http.Request
-buildRequestWithQuery verb url query operation variables =
-    let
-        params =
-            [ ( "query", query )
-            , ( "operationName", operation )
-            , ( "variables", (Json.Encode.encode 0 variables) )
-            ]
-    in
-        { verb = verb
-        , headers = [ ( "Accept", "application/json" ) ]
-        , url = Http.url url params
-        , body = Http.empty
-        }
-
-
-buildRequestWithBody : String -> String -> String -> String -> Json.Encode.Value -> Http.Request
-buildRequestWithBody verb url query operation variables =
+buildRequestWithBody : String -> String -> String -> String -> Json.Encode.Value -> Decoder a -> Http.Request a
+buildRequestWithBody verb url query operation variables decoder =
     let
         params =
             Json.Encode.object
@@ -73,14 +52,18 @@ buildRequestWithBody verb url query operation variables =
                 , ( "variables", variables )
                 ]
     in
-        { verb = verb
-        , headers =
-            [ ( "Accept", "application/json" )
-            , ( "Content-Type", "application/json" )
-            ]
-        , url = Http.url url []
-        , body = Http.string <| Json.Encode.encode 0 params
-        }
+        Http.request
+            { method = verb
+            , headers =
+                [ (header "Accept" "application/json")
+                , (header "Content-Type" "application/json")
+                ]
+            , url = url
+            , body = Http.jsonBody <| params
+            , expect = expectJson decoder
+            , timeout = Nothing
+            , withCredentials = False
+            }
 
 
 queryResult : Decoder a -> Decoder a
@@ -96,12 +79,12 @@ queryResult decoder =
 -}
 apply : Decoder (a -> b) -> Decoder a -> Decoder b
 apply func value =
-    object2 (<|) func value
+    map2 (<|) func value
 
 
 {-| Encodes a `Maybe` as JSON, using `null` for `Nothing`.
 -}
-maybeEncode : (a -> Value) -> Maybe a -> Value
+maybeEncode : (a -> Json.Encode.Value) -> Maybe a -> Json.Encode.Value
 maybeEncode e v =
     case v of
         Nothing ->
